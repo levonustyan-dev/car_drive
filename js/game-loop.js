@@ -26,11 +26,9 @@ let gameRunning=false, playerZ=0, playerX=0, speed=0, money=28, score=0, dist=0;
 let health=1, crashed=false, crashTimer=0, wheelRot=0, topSpeed=0;
 let nearMissTimer=0, framesSinceStart=0, steerAngle=0;
 let fuel=1.0;
-let policeChasing=false, speedingTimer=0, policeWheelRot=0;
 let nitroActive=false, nitroTimer=0, nitroCooldown=0;
 let isRain=false;
 let lastFuelSpawnZ=0, fuelPickupIdx=0, lastCoinSpawnZ=0, coinIdx=0;
-let npcMaxSpeed=21, lastStageDistKm=0;
 let paused=false;
 let camMode=0;
 const camModes=['3rd PERSON','LOW CAM','HOOD CAM','CHASE'];
@@ -67,10 +65,7 @@ function startGame(){
   steerAngle=0; framesSinceStart=0;
   fuel=1.0; nitroActive=false; nitroTimer=0; nitroCooldown=0;
   MAX_SPEED=BASE_MAX_SPEED; exhaustMat.color.setHex(0xaaaaaa);
-  policeChasing=false; speedingTimer=0; policeWheelRot=0;
-  policeGroup.position.set(LANE_X[1],0,startZ+100);
   paused=false; pauseOverlay.style.display='none';
-  npcMaxSpeed=21; lastStageDistKm=0;
   initAudio();
   if(audioCtx&&audioCtx.state==='suspended') audioCtx.resume();
 
@@ -92,8 +87,6 @@ function startGame(){
   let lampIdx=0;
   furniturePool.forEach(f=>{ if(f.position){ f.position.z=startZ+lampIdx*FURN_SPACING; lampIdx++; } });
   lampLights.forEach((l,i)=>{ l.position.z=startZ+Math.floor(i/2)*FURN_SPACING; });
-  npcCars.forEach((n,i)=>{ n.position.z=startZ+80+i*40+Math.random()*20; n.position.x=LANE_X[Math.floor(Math.random()*3)]; n.userData.speed=9+Math.random()*12; });
-
   document.getElementById('final-stats').style.display='flex';
   document.getElementById('overlay-title').textContent='🚗 RUSSIAN CAR DRIVER';
   document.getElementById('overlay-sub').textContent='Survive the night. Avoid traffic.';
@@ -143,10 +136,6 @@ function animate(){
     fuel=Math.max(0,fuel-speed*0.00008*dt);
     if(fuel<=0){ crashed=true; crashTimer=0; spawnSparks(playerX,0,playerZ); }
 
-    // Police speeding timer
-    const kmhNow=speed*3.6;
-    if(kmhNow>150){ speedingTimer+=dt; if(speedingTimer>=3&&!policeChasing){ policeChasing=true; showPopup('🚔 POLICE CHASE!','#ff4444'); policeGroup.position.set(LANE_X[1],0,playerZ-20); } }
-    else speedingTimer=Math.max(0,speedingTimer-dt*0.5);
   } else {
     speed=Math.max(speed-35*dt,0);
     crashTimer+=dt;
@@ -182,46 +171,17 @@ function animate(){
     engineGain.gain.setTargetAtTime(0,audioCtx.currentTime,0.3);
   }
 
-  // Difficulty scaling
-  const distKm=Math.floor(dist/500);
-  if(distKm>lastStageDistKm){ lastStageDistKm=distKm; npcMaxSpeed=Math.min(35,npcMaxSpeed+2); showPopup(`🏁 STAGE ${distKm}!`,'#ff8844'); }
-
   const gear=kmh<15?'1':kmh<40?'2':kmh<70?'3':kmh<110?'4':kmh<155?'5':'6';
   const rpm=Math.min(400+(kmh/220)*6800+(Math.random()-0.5)*150,7200);
 
   // Wheel rotation
   wheelRot+=speed*dt*2.5;
   playerWheels.forEach((w,i)=>{ w.rotation.x=wheelRot; if(i<2) w.rotation.y=steerAngle*0.35; });
-  npcCars.forEach(n=>{ n.userData.nw.forEach(w=>w.rotation.x-=n.userData.speed*dt*2); });
-
   carGroup.rotation.z=steerAngle*-0.04;
   if(brakeDown&&speed>5) carGroup.rotation.x=0.018;
   else if(gasDown) carGroup.rotation.x=-0.01;
   else carGroup.rotation.x*=0.85;
   carGroup.position.set(playerX,0,playerZ);
-
-  // Police movement
-  if(policeChasing){
-    const policeSpeed=speed+8;
-    policeGroup.position.z+=policeSpeed*dt;
-    const pdx=playerX-policeGroup.position.x;
-    policeGroup.position.x+=Math.sign(pdx)*Math.min(Math.abs(pdx),3*dt);
-    policeWheelRot+=policeSpeed*dt*2.5;
-    policeWheels.forEach(w=>w.rotation.x=policeWheelRot);
-    const slot=Math.floor(now/300)%2;
-    mRedLight.emissiveIntensity=slot===0?3:0.1; mBlueLight.emissiveIntensity=slot===0?0.1:3;
-    const pdxC=Math.abs(carGroup.position.x-policeGroup.position.x);
-    const pdzC=Math.abs(carGroup.position.z-policeGroup.position.z);
-    if(pdxC<1.5&&pdzC<3&&!crashed){
-      health=Math.max(0,health-0.35);
-      if(health<=0){ crashed=true; crashTimer=0; spawnSparks(playerX,0,playerZ); playCrashSound(); }
-      else spawnSparks(playerX,0,playerZ);
-    }
-  } else {
-    if(policeGroup.position.z<playerZ-50) policeGroup.position.set(LANE_X[1],0,playerZ+150+Math.random()*50);
-    const slot=Math.floor(now/300)%2;
-    mRedLight.emissiveIntensity=slot===0?3:0.1; mBlueLight.emissiveIntensity=slot===0?0.1:3;
-  }
 
   // Fuel pickups
   if(playerZ>lastFuelSpawnZ){ lastFuelSpawnZ+=FUEL_SPAWN_INTERVAL; const fp=fuelPickups[fuelPickupIdx%fuelPickups.length]; fuelPickupIdx++; fp.position.set(LANE_X[Math.floor(Math.random()*3)],0.5,playerZ+80+Math.random()*40); }
@@ -271,8 +231,6 @@ function animate(){
   buildingPool.forEach(b=>{ if(b.position.z<playerZ-40){ b.position.z+=NUM_BLDGS*BLDG_SPACING; b.position.x=(Math.random()>0.35?1:-1)*(12/2+5+Math.random()*8); } });
   furniturePool.forEach((f,i)=>{ if(f.position&&f.position.z<playerZ-30){ f.position.z+=NUM_FURN*FURN_SPACING; if(i<lampLights.length) lampLights[i].position.z=f.position.z; } });
   treePool.forEach(t=>{ if(t.position.z<playerZ-30) t.position.z+=30*18; });
-  npcCars.forEach(npc=>{ npc.position.z-=npc.userData.speed*dt; if(npc.position.z<playerZ-35){ npc.position.z=playerZ+70+Math.random()*60; npc.position.x=LANE_X[Math.floor(Math.random()*3)]; npc.userData.speed=9+Math.random()*(npcMaxSpeed-9); } });
-
   // Collision
   if(!crashed){
     const scoreRef={value:score}, moneyRef={value:money};

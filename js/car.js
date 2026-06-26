@@ -57,10 +57,17 @@ playerWheels.forEach(w=>carGroup.add(w));
 export let carLoaded = false;
 export const exhaustMat = new THREE.PointsMaterial({color:0xaaaaaa,size:0.12,transparent:true,opacity:0.4,sizeAttenuation:true});
 
-(function loadAudiModel(){
+(async function loadAudiModel(){
   const tdsLoader = new TDSLoader();
   tdsLoader.setResourcePath('Audi_S3/');
-  tdsLoader.load('Audi_S3.3DS', (object) => {
+  try {
+    const buffer = await fetch('Audi_S3.3DS').then(r => { if(!r.ok) throw new Error(r.status); return r.arrayBuffer(); });
+    const object = tdsLoader.parse(buffer, 'Audi_S3/');
+    let meshCount = 0;
+    object.traverse(m => { if(m.isMesh) meshCount++; });
+    console.log('Audi parse: meshes found =', meshCount);
+    if(meshCount === 0) throw new Error('No meshes in parsed model');
+    {
     object.scale.set(0.0055, 0.0055, 0.0055);
     object.rotation.x = Math.PI;
     object.rotation.y = Math.PI;
@@ -68,10 +75,15 @@ export const exhaustMat = new THREE.PointsMaterial({color:0xaaaaaa,size:0.12,tra
     object.traverse(m => {
       if(m.isMesh){
         m.castShadow = true; m.receiveShadow = true;
-        if(m.material){
-          const mats = Array.isArray(m.material)?m.material:[m.material];
-          mats.forEach(mat=>{ if(mat.map) mat.map.encoding=THREE.sRGBEncoding; mat.envMapIntensity=0.5; });
-        }
+        m.visible = true;
+        m.material = new THREE.MeshStandardMaterial({
+          color: 0xdddddd,
+          emissive: 0x888888,
+          emissiveIntensity: 1.0,
+          metalness: 0.3,
+          roughness: 0.6,
+          side: THREE.DoubleSide,
+        });
       }
     });
     const keepSet = new Set(playerWheels);
@@ -79,8 +91,9 @@ export const exhaustMat = new THREE.PointsMaterial({color:0xaaaaaa,size:0.12,tra
     carGroup.add(object);
     carLoaded = true;
     console.log('Audi S3 model loaded ✓');
-  }, undefined, (err) => {
-    console.warn('Could not load Audi_S3.3DS — using procedural car.', err);
+    }
+  } catch(err) {
+    console.error('Could not load Audi_S3.3DS — using procedural car.', err);
     carLoaded = true;
-  });
+  }
 })();
