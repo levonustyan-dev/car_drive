@@ -1,3 +1,4 @@
+<!-- Run: node server.js then open http://localhost:3000 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -14,6 +15,17 @@
     #signals{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);display:flex;gap:40px;pointer-events:none}
     .sig{font-size:28px;opacity:.2;transition:opacity .1s}
     .sig.on{opacity:1;filter:drop-shadow(0 0 8px #ff9900)}
+    #overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.65);z-index:100;color:#fff;font-family:Arial,sans-serif;text-align:center}
+    #overlay h1{font-size:3rem;letter-spacing:6px;margin-bottom:.75rem;text-transform:uppercase}
+    #overlay h2{font-size:2.2rem;letter-spacing:4px;margin-bottom:.75rem;text-transform:uppercase}
+    #overlay p{font-size:1rem;opacity:.75;letter-spacing:2px}
+    #mission-prompt{display:none;position:fixed;bottom:120px;left:50%;transform:translateX(-50%);
+      background:rgba(0,0,0,.7);color:#ffdd00;font:bold 13px Arial;letter-spacing:2px;
+      padding:8px 18px;border:1px solid #ffdd00;border-radius:4px;pointer-events:none}
+    #nav-arrow{display:none;position:fixed;top:20px;left:50%;transform:translateX(-50%);
+      flex-direction:column;align-items:center;color:#ffdd00;pointer-events:none;z-index:50}
+    #nav-arrow-icon{font-size:48px;line-height:1}
+    #nav-dist{font:bold 13px Arial;letter-spacing:1px;margin-top:2px}
   </style>
 </head>
 <body>
@@ -24,397 +36,25 @@
 </div>
 <div id="minimap"><canvas id="mmCanvas" width="140" height="140"></canvas></div>
 <div id="speed">0 km/h</div>
+<div id="mission-prompt">Press F to start mission</div>
+<div id="nav-arrow">
+  <div id="nav-arrow-icon">▲</div>
+  <div id="nav-dist"></div>
+</div>
+<div id="overlay">
+  <div id="overlay-menu">
+    <h1>Car Drive</h1>
+    <p>Press Enter to play</p>
+  </div>
+  <div id="overlay-pause" style="display:none">
+    <h2>Paused</h2>
+    <p>Press Escape to resume</p>
+  </div>
+</div>
 <script type="importmap">{"imports":{
   "three":"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js",
   "three/examples/jsm/loaders/GLTFLoader":"https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/loaders/GLTFLoader.js"
 }}</script>
-<script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
-
-// ── Renderer ──────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
-document.body.prepend(renderer.domElement);
-window.addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
-
-// ── Scene ─────────────────────────────────────────
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.Fog(0x87ceeb, 80, 300);
-
-// ── Camera ────────────────────────────────────────
-const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 400);
-
-// ── Lighting ──────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-
-const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-sun.position.set(20, 50, -30);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
-sun.shadow.camera.right = sun.shadow.camera.top = 60;
-scene.add(sun);
-
-const HL = [
-  new THREE.SpotLight(0xfff3cc, 5, 80, 0.22, 0.5),
-  new THREE.SpotLight(0xfff3cc, 5, 80, 0.22, 0.5),
-];
-HL.forEach(h => scene.add(h, h.target));
-
-// ── Road ──────────────────────────────────────────
-const ROAD_W = 12;
-const SEG_LEN = 80;
-const NUM_SEGS = 8;
-
-function mat(color, rough = 0.8, metal = 0) {
-  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
-}
-const mAsphalt  = mat(0x2a2a38, 0.97);
-const mYellow   = mat(0xffdd00, 0.85);
-const mWhite    = mat(0xffffff, 0.85);
-const mGrass    = mat(0x3a7d2c, 0.95);
-const mSidewalk = mat(0xaaaaaa, 0.9);
-const mTreeTrunk= mat(0x7a4f2a, 0.9);
-const mLeaves   = mat(0x2d7a1f, 0.8);
-const mRoof     = mat(0xb03020, 0.85);
-const mWall     = mat(0xe8d8b0, 0.9);
-const mWindow   = mat(0x88bbff, 0.3, 0.1);
-const mDoor     = mat(0x8b5e3c, 0.9);
-const mLake     = new THREE.MeshStandardMaterial({color:0x1a6fa8,roughness:0.05,metalness:0.3,transparent:true,opacity:0.85});
-
-function box(w, h, d, m) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-  mesh.castShadow = mesh.receiveShadow = true;
-  return mesh;
-}
-function cyl(rt, rb, h, seg, m) {
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), m);
-  mesh.castShadow = true;
-  return mesh;
-}
-
-// Seeded pseudo-random for consistent world layout
-function seededRand(seed) {
-  let s = seed;
-  return () => { s = (s * 16807 + 0) % 2147483647; return (s - 1) / 2147483646; };
-}
-
-function makeTree(g, x, z, rng) {
-  const h = 2.5 + rng() * 2;
-  const trunk = cyl(0.12, 0.18, h * 0.4, 6, mTreeTrunk);
-  trunk.position.set(x, h * 0.2, z); g.add(trunk);
-  const top = new THREE.Mesh(new THREE.ConeGeometry(0.9 + rng() * 0.5, h * 0.7, 7), mLeaves);
-  top.castShadow = true;
-  top.position.set(x, h * 0.4 + h * 0.35, z); g.add(top);
-}
-
-function makeHouse(g, x, z, rng, side) {
-  const W = 4 + rng() * 3, D = 5 + rng() * 3, H = 3 + rng() * 1.5;
-  const wallColor = [0xe8d8b0, 0xd4c4a0, 0xc8b090, 0xf0e0c0][Math.floor(rng() * 4)];
-  const wallM = mat(wallColor, 0.9);
-  const wall = box(W, H, D, wallM); wall.position.set(x, H / 2, z); g.add(wall);
-  const roofH = 1.5 + rng();
-  const roofColor = [0xb03020, 0x704020, 0x506080, 0x888888][Math.floor(rng() * 4)];
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(W,D)*0.72, roofH, 4), mat(roofColor, 0.85));
-  roof.castShadow = true;
-  roof.rotation.y = Math.PI / 4;
-  roof.position.set(x, H + roofH / 2, z); g.add(roof);
-  // Door
-  const door = box(0.9, 2, 0.1, mDoor);
-  door.position.set(x, 1, z + side * D / 2); g.add(door);
-  // Windows
-  [-W*0.25, W*0.25].forEach(wx => {
-    const win = box(0.8, 0.7, 0.1, mWindow);
-    win.position.set(x + wx, H * 0.6, z + side * D / 2); g.add(win);
-  });
-}
-
-function makeSegment(z, idx) {
-  const g = new THREE.Group();
-  const rng = seededRand(idx * 9973 + 1);
-
-  // Ground
-  [-1,1].forEach(s => {
-    const grass = box(60, 0.1, SEG_LEN, mGrass); grass.position.set(s*(ROAD_W/2+30), -0.05, 0); g.add(grass);
-    const swalk = box(2, 0.06, SEG_LEN, mSidewalk); swalk.position.set(s*(ROAD_W/2+2), 0.02, 0); g.add(swalk);
-  });
-
-  // Road
-  const road = box(ROAD_W + 0.4, 0.08, SEG_LEN, mAsphalt); road.position.y = -0.04; g.add(road);
-  const cl = box(0.14, 0.01, SEG_LEN, mYellow); cl.position.y = 0.04; g.add(cl);
-  [-ROAD_W/2+0.3, ROAD_W/2-0.3].forEach(x => {
-    const el = box(0.12, 0.01, SEG_LEN, mWhite); el.position.set(x, 0.04, 0); g.add(el);
-  });
-
-  // Roadside trees (close to road, every 6 units)
-  [-1,1].forEach(side => {
-    const treeX = side * (ROAD_W/2 + 2.2);
-    for (let lz = -SEG_LEN/2 + 3; lz < SEG_LEN/2; lz += 6) {
-      makeTree(g, treeX + (rng()-0.5)*0.8, lz + (rng()-0.5)*1.5, rng);
-    }
-  });
-
-  // Trees & houses further back
-  [-1,1].forEach(side => {
-    const baseX = side * (ROAD_W/2 + 10);
-    for (let lz = -SEG_LEN/2 + 5; lz < SEG_LEN/2; lz += 12) {
-      const r = rng();
-      if (r < 0.45) {
-        // Tree cluster
-        for (let t = 0; t < 3; t++)
-          makeTree(g, baseX + side*(rng()*5), lz + rng()*8-4, rng);
-      } else if (r < 0.8) {
-        makeHouse(g, baseX + side*(2+rng()*4), lz + rng()*3, rng, side);
-      } else {
-        makeTree(g, baseX + side*1, lz, rng);
-        makeTree(g, baseX + side*3, lz+3, rng);
-        makeTree(g, baseX + side*5, lz+1, rng);
-      }
-    }
-  });
-
-  // Lake on left side every few segments
-  if (idx % 4 === 2) {
-    const lake = new THREE.Mesh(new THREE.PlaneGeometry(18, 25), mLake);
-    lake.rotation.x = -Math.PI/2;
-    lake.position.set(-(ROAD_W/2 + 16), 0.02, 0);
-    g.add(lake);
-  }
-
-  g.position.z = z;
-  scene.add(g);
-  return g;
-}
-
-const segments = [];
-for (let i = 0; i < NUM_SEGS; i++) segments.push(makeSegment(i * SEG_LEN, i));
-
-// ── Car ───────────────────────────────────────────
-const carGroup = new THREE.Group();
-scene.add(carGroup);
-
-// ── Placeholder body (visible until GLB loads) ───────────────────
-const placeholder = new THREE.Mesh(
-  new THREE.BoxGeometry(1.8, 0.9, 4.0),
-  new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 1.2 })
-);
-placeholder.position.y = 0.7;
-carGroup.add(placeholder);
-
-// ── Load GLB car model ────────────────────────────
-const glbWheels = [];
-(function () {
-  const loader = new GLTFLoader();
-  loader.load('toon__free_car (1).glb', function (gltf) {
-    const obj = gltf.scene;
-
-    // Auto-scale to fit ~4m length
-    const bbox = new THREE.Box3().setFromObject(obj);
-    const maxDim = Math.max(...bbox.getSize(new THREE.Vector3()).toArray());
-    obj.scale.setScalar(4.0 / maxDim);
-
-    // Rotate so rear faces camera
-    obj.rotation.y = -Math.PI / 2;
-
-    // Sit on ground, centered
-    const bbox2 = new THREE.Box3().setFromObject(obj);
-    const center = bbox2.getCenter(new THREE.Vector3());
-    obj.position.set(-center.x, -bbox2.min.y, -center.z);
-
-    // Log every node so we can identify wheel names
-    const allNodes = [];
-    obj.traverse(n => { allNodes.push(n.name + ' (' + n.type + ')'); });
-    console.log('ALL NODES:\n' + allNodes.join('\n'));
-
-    obj.traverse(m => { if (m.isMesh) m.castShadow = m.receiveShadow = true; });
-
-    [...carGroup.children].forEach(c => carGroup.remove(c));
-    carGroup.add(obj);
-    console.log('Car loaded ✓');
-  }, undefined, err => console.error('GLB load failed', err));
-})();
-
-// ── Input ─────────────────────────────────────────
-const keys = {};
-window.addEventListener('keydown', e => { keys[e.code] = true; });
-window.addEventListener('keyup',   e => { keys[e.code] = false; });
-
-// ── State ─────────────────────────────────────────
-let playerZ = SEG_LEN * 2, playerX = 0, speed = 0, steer = 0, wheelRot = 0;
-const ROAD_HALF = ROAD_W / 2 - 1;
-const MAX_SPEED = 30, ACCEL = 18, BRAKE = 40, STEER_SPD = 8;
-
-// ── Loop ──────────────────────────────────────────
-let lastT = performance.now();
-function animate() {
-  requestAnimationFrame(animate);
-  const now = performance.now();
-  const dt  = Math.min((now - lastT) / 1000, 0.05);
-  lastT = now;
-
-  const gas   = keys['ArrowUp']    || keys['KeyW'];
-  const brake = keys['ArrowDown']  || keys['KeyS'] || keys['Space'];
-  const left  = keys['ArrowLeft']  || keys['KeyA'];
-  const right = keys['ArrowRight'] || keys['KeyD'];
-
-  if (gas)   speed = Math.min(speed + ACCEL * dt, MAX_SPEED);
-  else       speed = Math.max(speed - 8 * dt, 0);
-  if (brake) speed = Math.max(speed - BRAKE * dt, 0);
-
-  const targetSteer = left ? -1 : right ? 1 : 0;
-  steer += (targetSteer - steer) * Math.min(dt * 6, 1);
-  playerX = Math.max(-ROAD_HALF, Math.min(ROAD_HALF, playerX + steer * STEER_SPD * dt));
-  playerZ += speed * dt;
-
-  wheelRot += speed * dt * 2.5;
-  glbWheels.forEach(w => { w.rotation.x += speed * dt * 2.5; });
-
-  carGroup.position.set(playerX, 0, playerZ);
-  carGroup.rotation.z = steer * -0.04;
-
-  segments.forEach((s, i) => {
-    if (s.position.z + SEG_LEN / 2 < playerZ - SEG_LEN) {
-      s.position.z += NUM_SEGS * SEG_LEN;
-    }
-  });
-
-  sun.position.set(playerX + 20, 50, playerZ - 30);
-
-  HL[0].position.set(playerX - 0.5, 0.65, playerZ + 1.8);
-  HL[1].position.set(playerX + 0.5, 0.65, playerZ + 1.8);
-  HL[0].target.position.set(playerX - 4, -0.2, playerZ + 40);
-  HL[1].target.position.set(playerX + 4, -0.2, playerZ + 40);
-
-  camera.position.set(playerX, 2.5, playerZ - 9);
-  camera.lookAt(playerX, 0.5, playerZ + 15);
-
-  drawMinimap();
-  document.getElementById('speed').textContent = Math.round(speed * 3.6) + ' km/h';
-  const blink = Math.floor(now / 400) % 2 === 0;
-  document.getElementById('sigL').className = 'sig' + (left && blink ? ' on' : '');
-  document.getElementById('sigR').className = 'sig' + (right && blink ? ' on' : '');
-
-  renderer.render(scene, camera);
-}
-
-// ── Minimap ───────────────────────────────────────
-const mmCtx = document.getElementById('mmCanvas').getContext('2d');
-const MM = 140, MM_RANGE = 160;
-
-function w2mm(wx, wz) {
-  // world → minimap pixels (car centered)
-  const px = MM/2 + (wx - playerX) / MM_RANGE * MM;
-  const py = MM/2 - (wz - playerZ) / MM_RANGE * MM;
-  return [px, py];
-}
-
-function drawMinimap() {
-  // Grass background
-  mmCtx.fillStyle = '#3a7d2c';
-  mmCtx.fillRect(0, 0, MM, MM);
-
-  // Lakes
-  for (let i = 0; i < NUM_SEGS; i++) {
-    const segZ = segments[i].position.z;
-    if (i % 4 === 2) {
-      const [lx, ly] = w2mm(-(ROAD_W/2+16), segZ);
-      mmCtx.fillStyle = '#1a6fa8';
-      mmCtx.fillRect(lx - 14, ly - 20, 28, 40);
-    }
-  }
-
-  // Road
-  const [r0x] = w2mm(-ROAD_W/2, 0);
-  const [r1x] = w2mm( ROAD_W/2, 0);
-  const roadW = r1x - r0x;
-  mmCtx.fillStyle = '#333';
-  mmCtx.fillRect(MM/2 - roadW/2, 0, roadW, MM);
-
-  // Center dashes
-  mmCtx.strokeStyle = '#ffdd00';
-  mmCtx.lineWidth = 1;
-  mmCtx.setLineDash([5,5]);
-  mmCtx.beginPath(); mmCtx.moveTo(MM/2, 0); mmCtx.lineTo(MM/2, MM); mmCtx.stroke();
-  mmCtx.setLineDash([]);
-
-  // Sidewalks
-  mmCtx.fillStyle = '#aaa';
-  [-1,1].forEach(s => {
-    const [sx] = w2mm(s*(ROAD_W/2+2), 0);
-    mmCtx.fillRect(sx - 1, 0, 2, MM);
-  });
-
-  // Trees (green dots)
-  mmCtx.fillStyle = '#1a5c10';
-  for (let i = 0; i < NUM_SEGS; i++) {
-    const segZ = segments[i].position.z;
-    const rng2 = seededRand(i * 9973 + 1);
-    [-1,1].forEach(side => {
-      const baseX = side * (ROAD_W/2 + 4);
-      for (let lz = -SEG_LEN/2+5; lz < SEG_LEN/2; lz += 12) {
-        const r = rng2();
-        const tx = baseX + side * rng2() * 3;
-        const tz = segZ + lz + rng2() * 4 - 2;
-        if (r < 0.4 || r >= 0.75) {
-          const [mx,my] = w2mm(tx, tz);
-          mmCtx.beginPath(); mmCtx.arc(mx, my, 2.5, 0, Math.PI*2); mmCtx.fill();
-        } else {
-          rng2(); rng2(); rng2(); rng2(); rng2(); rng2(); rng2(); rng2();
-        }
-      }
-    });
-  }
-
-  // Houses (small beige squares)
-  mmCtx.fillStyle = '#c8a870';
-  for (let i = 0; i < NUM_SEGS; i++) {
-    const segZ = segments[i].position.z;
-    const rng2 = seededRand(i * 9973 + 1);
-    [-1,1].forEach(side => {
-      const baseX = side * (ROAD_W/2 + 4);
-      for (let lz = -SEG_LEN/2+5; lz < SEG_LEN/2; lz += 12) {
-        const r = rng2();
-        rng2();
-        const hx = baseX + side * (4 + rng2() * 4);
-        const hz = segZ + lz + rng2() * 3;
-        if (r >= 0.4 && r < 0.75) {
-          const [mx,my] = w2mm(hx, hz);
-          mmCtx.fillRect(mx-3, my-4, 6, 8);
-        } else {
-          rng2(); rng2();
-        }
-      }
-    });
-  }
-
-  // Car (white arrow)
-  const cx = MM/2, cy = MM/2;
-  mmCtx.fillStyle = '#fff';
-  mmCtx.beginPath();
-  mmCtx.arc(cx, cy, 4, 0, Math.PI*2);
-  mmCtx.fill();
-  mmCtx.strokeStyle = '#4af';
-  mmCtx.lineWidth = 2;
-  mmCtx.beginPath(); mmCtx.moveTo(cx, cy+5); mmCtx.lineTo(cx, cy-10); mmCtx.stroke();
-
-  // Border
-  mmCtx.strokeStyle = 'rgba(255,255,255,0.3)';
-  mmCtx.lineWidth = 1;
-  mmCtx.strokeRect(0,0,MM,MM);
-}
-
-animate();
-</script>
+<script type="module" src="src/main.js"></script>
 </body>
 </html>
