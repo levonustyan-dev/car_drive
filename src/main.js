@@ -126,6 +126,14 @@ function drawMinimap() {
   mmCtx.strokeRect(0, 0, MM, MM);
 }
 
+// ── Boundary clamp (computed once, logged at startup) ─────────────────────
+const margin = 25;
+const minX = -CITY_SPAN / 2 + margin;
+const maxX =  CITY_SPAN / 2 - margin;
+const minZ =  OZ - CITY_SPAN / 2 + margin;
+const maxZ =  OZ + CITY_SPAN / 2 - margin;
+console.log('[main] boundary clamp  minX:', minX, ' maxX:', maxX, ' minZ:', minZ, ' maxZ:', maxZ);
+
 // ── Animate ───────────────────────────────────────
 let lastT = performance.now();
 function animate() {
@@ -136,9 +144,8 @@ function animate() {
 
   if (stateManager.getState() === States.PLAYING) updatePhysics(dt, keys);
 
-  const margin = 5;
-  state.playerX = Math.max(-CITY_SPAN / 2 + margin, Math.min(CITY_SPAN / 2 - margin, state.playerX));
-  state.playerZ = Math.max(OZ - CITY_SPAN / 2 + margin, Math.min(OZ + CITY_SPAN / 2 - margin, state.playerZ));
+  state.playerX = Math.max(minX, Math.min(maxX, state.playerX));
+  state.playerZ = Math.max(minZ, Math.min(maxZ, state.playerZ));
 
   const { speed, steer, angle, playerX, playerZ } = state;
 

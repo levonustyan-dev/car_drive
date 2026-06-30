@@ -1,21 +1,30 @@
 import * as THREE from 'three';
 import { Waypoint } from '../entities/Waypoint.js';
 
+// Playable bounds (mirror WorldMap: CITY_SPAN=300, OZ=160)
+const _WP_MIN_X = -120, _WP_MAX_X = 120;   // ±CITY_SPAN/2 - 30
+const _WP_MIN_Z =   40, _WP_MAX_Z = 280;   // OZ ± CITY_SPAN/2 - 30
+const _cx = x => Math.max(_WP_MIN_X, Math.min(_WP_MAX_X, x));
+const _cz = z => Math.max(_WP_MIN_Z, Math.min(_WP_MAX_Z, z));
+
 const MISSIONS = [
   { id: 'm1', title: 'Pizza Delivery', type: 'delivery',
     description: "Pick up the pizza from Mario's restaurant, then deliver it to the customer on Oak Street. Follow the yellow marker.",
-    pickupPos: { x: 0, z: 300 }, dropPos: { x: 0, z: 600 }, reward: 500 },
+    pickupPos: { x: _cx(0), z: _cz(300) }, dropPos: { x: _cx(0), z: _cz(600) }, reward: 500 },
   { id: 'm2', title: 'Street Race', type: 'race',
     description: "Race to the finish line across town in under 30 seconds. Every second counts!",
-    goalPos: { x: 0, z: 800 }, timeLimit: 30, reward: 1000 },
+    goalPos: { x: _cx(0), z: _cz(800) }, timeLimit: 30, reward: 1000 },
   { id: 'm3', title: 'Getaway', type: 'drive',
     description: "The police are closing in. Drive 500 meters without stopping or dropping below 20 km/h.",
     distance: 500, reward: 750 },
 ];
 
-console.log('[MissionSystem] m1 pickup:', MISSIONS[0].pickupPos, ' m1 dropoff:', MISSIONS[0].dropPos, ' m2 goal:', MISSIONS[1].goalPos);
+console.log('[MissionSystem] clamped waypoints —',
+  'm1 pickup:', MISSIONS[0].pickupPos,
+  'm1 dropoff:', MISSIONS[0].dropPos,
+  'm2 goal:', MISSIONS[1].goalPos);
 
-const TRIGGER_Z  = 200;
+const TRIGGER_Z  = _cz(200);
 const TRIGGER_R  = 4;
 const PROMPT_R   = 8;
 const GOAL_REACH = 8;
