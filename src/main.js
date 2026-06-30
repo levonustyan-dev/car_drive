@@ -6,7 +6,7 @@ import { Vehicle } from './entities/Vehicle.js';
 import { StateManager, States } from './systems/StateManager.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { TrafficSystem } from './systems/TrafficSystem.js';
-import { makeCity, ROAD, roadLinesX, roadLinesZ } from './core/WorldMap.js';
+import { makeCity, ROAD, roadLinesX, roadLinesZ, CITY_SPAN, OZ } from './core/WorldMap.js';
 import { HUD } from './ui/HUD.js';
 
 // ── Renderer ──────────────────────────────────────
@@ -135,6 +135,11 @@ function animate() {
   lastT = now;
 
   if (stateManager.getState() === States.PLAYING) updatePhysics(dt, keys);
+
+  const margin = 5;
+  state.playerX = Math.max(-CITY_SPAN / 2 + margin, Math.min(CITY_SPAN / 2 - margin, state.playerX));
+  state.playerZ = Math.max(OZ - CITY_SPAN / 2 + margin, Math.min(OZ + CITY_SPAN / 2 - margin, state.playerZ));
+
   const { speed, steer, angle, playerX, playerZ } = state;
 
   missionSystem.update(dt, { x: playerX, z: playerZ }, speed);

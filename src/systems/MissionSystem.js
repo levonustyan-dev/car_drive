@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Waypoint } from '../entities/Waypoint.js';
 
 const MISSIONS = [
   { id: 'm1', title: 'Pizza Delivery', type: 'delivery',
@@ -11,6 +12,8 @@ const MISSIONS = [
     description: "The police are closing in. Drive 500 meters without stopping or dropping below 20 km/h.",
     distance: 500, reward: 750 },
 ];
+
+console.log('[MissionSystem] m1 pickup:', MISSIONS[0].pickupPos, ' m1 dropoff:', MISSIONS[0].dropPos, ' m2 goal:', MISSIONS[1].goalPos);
 
 const TRIGGER_Z  = 200;
 const TRIGGER_R  = 4;
@@ -51,6 +54,11 @@ export class MissionSystem extends EventEmitter {
     this._triggerMesh.position.set(0, 0.1, TRIGGER_Z);
     scene.add(this._triggerMesh);
 
+    this._pickupWp  = new Waypoint(scene, { x: 0, z: 0 });
+    this._pickupWp.hide();
+    this._dropoffWp = new Waypoint(scene, { x: 0, z: 0 });
+    this._dropoffWp.hide();
+
     this._prompt = document.getElementById('mission-prompt');
   }
 
@@ -64,12 +72,21 @@ export class MissionSystem extends EventEmitter {
     this._timer            = def.timeLimit || 0;
     this._distanceTraveled = 0;
     this._phase            = def.type === 'delivery' ? 'pickup' : null;
+
+    if (def.type === 'delivery') {
+      this._pickupWp.moveTo(def.pickupPos);
+      this._dropoffWp.moveTo(def.dropPos);
+      this._pickupWp.show();
+    }
+
     this._setPrompt(false);
     this.emit('mission:start', this._current);
   }
 
   update(dt, playerPos, playerSpeed) {
     this._animateTrigger(dt);
+    this._pickupWp.update(dt);
+    this._dropoffWp.update(dt);
     this._checkProximity(playerPos);
     if (!this._current) return;
 
@@ -83,6 +100,8 @@ export class MissionSystem extends EventEmitter {
     } else if (m.type === 'delivery') {
       if (this._phase === 'pickup' && this._dist(playerPos, m.pickupPos) < GOAL_REACH) {
         this._phase = 'deliver';
+        this._pickupWp.hide();
+        this._dropoffWp.show();
       } else if (this._phase === 'deliver' && this._dist(playerPos, m.dropPos) < GOAL_REACH) {
         this.completeMission();
       }
@@ -127,6 +146,8 @@ export class MissionSystem extends EventEmitter {
     this._timer            = 0;
     this._distanceTraveled = 0;
     this._phase            = null;
+    this._pickupWp.hide();
+    this._dropoffWp.hide();
   }
 
   _dist(a, b) {

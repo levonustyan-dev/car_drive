@@ -5,15 +5,22 @@ export const BLOCK = 60;
 const  CELL  = BLOCK + ROAD;        // 72 — center-to-center road spacing
 const  N     = 4;                   // 4×4 grid of blocks
 
-const OX        = 0;
-const OZ        = 160;              // matches physics playerZ start
-const CITY_SPAN = N * CELL + ROAD;  // 300 — outer edge to outer edge
+const        OX        = 0;
+export const OZ        = 160;              // matches physics playerZ start
+export const CITY_SPAN = N * CELL + ROAD;  // 300 — outer edge to outer edge
 
 // Road centerlines in world space
 // X: [-144, -72, 0, 72, 144]
 // Z: [16, 88, 160, 232, 304]
 export const roadLinesX = Array.from({ length: N + 1 }, (_, i) => OX + (i - N / 2) * CELL);
 export const roadLinesZ = Array.from({ length: N + 1 }, (_, i) => OZ + (i - N / 2) * CELL);
+
+console.log('[WorldMap] CITY_SPAN:', CITY_SPAN, ' OX:', OX, ' OZ:', OZ);
+console.log('[WorldMap] CELL:', CELL, ' OZ:', OZ, ' OX:', OX, ' N:', N, ' BLOCK:', BLOCK, ' ROAD:', ROAD, ' CITY_SPAN:', CITY_SPAN);
+console.log('[WorldMap] roadLinesX:', roadLinesX);
+console.log('[WorldMap] roadLinesZ:', roadLinesZ);
+console.log('[WorldMap] Road grid bbox  X:', roadLinesX[0] - ROAD / 2, '→', roadLinesX[roadLinesX.length - 1] + ROAD / 2,
+            ' Z:', roadLinesZ[0] - ROAD / 2, '→', roadLinesZ[roadLinesZ.length - 1] + ROAD / 2);
 
 // ── Materials ────────────────────────────────────
 function mat(color, rough = 0.8, metal = 0) {
