@@ -6,7 +6,7 @@ import { Vehicle } from './entities/Vehicle.js';
 import { StateManager, States } from './systems/StateManager.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { TrafficSystem } from './systems/TrafficSystem.js';
-import { makeCity, ROAD, roadLinesX, roadLinesZ, CITY_SPAN, OZ } from './core/WorldMap.js';
+import { makeCity, ROAD, roadLinesX, roadLinesZ, CITY_SPAN, OZ, houseColliders } from './core/WorldMap.js';
 import { HUD } from './ui/HUD.js';
 
 // ── Renderer ──────────────────────────────────────
@@ -33,7 +33,7 @@ scene.fog = new THREE.Fog(0x87ceeb, 80, 300);
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 400);
 
 // ── Lighting ──────────────────────────────────────
-scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+scene.add(new THREE.AmbientLight(0xffffff, 2.0));
 
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
 sun.position.set(20, 50, -30);
@@ -42,6 +42,10 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
 sun.shadow.camera.right = sun.shadow.camera.top = 60;
 scene.add(sun);
+
+const sun2 = new THREE.DirectionalLight(0xffffff, 1.0);
+sun2.position.set(-20, 30, 20);
+scene.add(sun2);
 
 
 // ── World ─────────────────────────────────────────
@@ -146,6 +150,30 @@ function animate() {
 
   state.playerX = Math.max(minX, Math.min(maxX, state.playerX));
   state.playerZ = Math.max(minZ, Math.min(maxZ, state.playerZ));
+
+  const playerSphere = new THREE.Sphere(
+    new THREE.Vector3(state.playerX, 0.5, state.playerZ), 1.5
+  );
+  for (const box of houseColliders) {
+    const expanded = box.clone().expandByScalar(1.5);
+    if (expanded.containsPoint(playerSphere.center)) {
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      const dx = state.playerX - center.x;
+      const dz = state.playerZ - center.z;
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      // Push out along whichever axis has the smaller overlap
+      const overlapX = (size.x / 2 + 1.5) - Math.abs(dx);
+      const overlapZ = (size.z / 2 + 1.5) - Math.abs(dz);
+      if (overlapX < overlapZ) {
+        state.playerX += Math.sign(dx) * overlapX;
+      } else {
+        state.playerZ += Math.sign(dz) * overlapZ;
+      }
+      state.speed *= -0.3;
+    }
+  }
 
   const { speed, steer, angle, playerX, playerZ } = state;
 

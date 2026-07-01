@@ -12,6 +12,8 @@ export const CITY_SPAN = N * CELL + ROAD;
 export const roadLinesX = Array.from({ length: N + 1 }, (_, i) => OX + (i - N / 2) * CELL);
 export const roadLinesZ = Array.from({ length: N + 1 }, (_, i) => OZ + (i - N / 2) * CELL);
 
+export const houseColliders = [];
+
 // ── Materials ─────────────────────────────────────
 function mat(color, rough = 0.8, metal = 0) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
@@ -35,116 +37,173 @@ function seededRand(seed) {
   return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
 }
 
-// ── GLB template builders ─────────────────────────
+// ── Procedural house ──────────────────────────────
+const _WALL_COLORS = [0xE8D5B0, 0xC4A882, 0xB5C4B1, 0xD4956A, 0xE8C4A0, 0xBFD0B8];
+const _ROOF_COLORS = [0x8B2020, 0x4A3728, 0x555555, 0x7A3B1E];
 
-// Tree: bakes rotation, scale, and centering into a wrapper Group so clones
-// only need a position and a Y rotation.
-function prepareTreeTemplate(gltf, targetHeight) {
-  const inner = gltf.scene;
+function makeHouse(g, cx, cz, rng) {
+  const isSmall   = rng() < 0.45;
+  const wallColor = _WALL_COLORS[Math.floor(rng() * _WALL_COLORS.length)];
+  const roofColor = _ROOF_COLORS[Math.floor(rng() * _ROOF_COLORS.length)];
 
-  inner.rotation.x = -Math.PI / 2;
-  inner.updateMatrixWorld(true);
+  // Dimensions and position vary by type
+  let W, H, D, px, pz;
+  if (isSmall) {
+    W = 6; H = 4; D = 5;
+    const sx = rng() < 0.5 ? 1 : -1;
+    const sz = rng() < 0.5 ? 1 : -1;
+    px = cx + sx * BLOCK * 0.18;
+    pz = cz + sz * BLOCK * 0.18;
+  } else {
+    W = 5; H = 10; D = 5;
+    rng(); rng(); // consume sign picks for sequence stability
+    px = cx;
+    pz = cz;
+  }
 
-  const b1 = new THREE.Box3().setFromObject(inner);
-  const sz = new THREE.Vector3();
-  b1.getSize(sz);
+  const grp  = new THREE.Group();
+  grp.position.set(px, 0, pz);
 
-  const largest = Math.max(sz.x, sz.y, sz.z);
-  const scale   = largest > 0 ? targetHeight / largest : 1;
+  const mWall = mat(wallColor, 0.85);
+  const mRoof = mat(roofColor, 0.85);
+  const mWin  = mat(0xD0E8F8, 0.15, 0.15);
+  const mDoor = mat(0x4A2F1A, 0.9);
+
+  // Main walls
+  const walls = box(W, H, D, mWall);
+  walls.position.y = H / 2;
+  grp.add(walls);
+
+  // Roof: ConeGeometry(size*0.7, size*0.5, 4) rotated 45° on Y
+  const size  = Math.max(W, D);
+  const roofH = size * 0.5;
+  const roof  = new THREE.Mesh(
+    new THREE.ConeGeometry(size * 0.7, roofH, 4),
+    mRoof
+  );
+  roof.castShadow = true;
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = H + roofH / 2;
+  grp.add(roof);
+
+  // Windows — one per wall face; tall buildings get a second row
+  const winW = isSmall ? 0.85 : 1.05;
+  const winH = isSmall ? 0.8  : 1.15;
+  const row1Y = isSmall ? H * 0.62 : H * 0.3;
+
+  const addWinRow = (y) => {
+    // Front (+Z) and back (−Z)
+    for (const s of [-1, 1]) {
+      const w = box(winW, winH, 0.1, mWin);
+      w.position.set(0, y, s * (D / 2 + 0.02));
+      grp.add(w);
+    }
+    // Left (−X) and right (+X)
+    for (const s of [-1, 1]) {
+      const w = box(0.1, winH, winW, mWin);
+      w.position.set(s * (W / 2 + 0.02), y, 0);
+      grp.add(w);
+    }
+  };
+
+  addWinRow(row1Y);
+  if (!isSmall) addWinRow(H * 0.65); // second floor windows on tall building
+
+  // Door on front face (+Z), slightly off-centre
+  const doorH = isSmall ? 2.0 : 2.5;
+  const door  = box(isSmall ? 0.9 : 1.1, doorH, 0.1, mDoor);
+  door.position.set(W * 0.18, doorH / 2, D / 2 + 0.02);
+  grp.add(door);
+
+  g.add(grp);
+}
+
+// ── GLB template helpers ──────────────────────────
+function _wrapTemplate(inner, scale) {
   inner.scale.setScalar(scale);
   inner.updateMatrixWorld(true);
 
-  const b2 = new THREE.Box3().setFromObject(inner);
-  inner.position.x = -(b2.min.x + b2.max.x) / 2;
-  inner.position.y = -b2.min.y;
-  inner.position.z = -(b2.min.z + b2.max.z) / 2;
+  const b = new THREE.Box3().setFromObject(inner);
+  inner.position.set(
+    -(b.min.x + b.max.x) / 2,
+    -b.min.y,
+    -(b.min.z + b.max.z) / 2
+  );
 
-  inner.traverse(obj => {
-    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
-  });
+  inner.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 
   const wrapper = new THREE.Group();
   wrapper.add(inner);
   return wrapper;
 }
 
-// House: stored raw (no transform baked) so each clone can receive the
-// rotation.x correction independently, then have its bbox re-measured for
-// accurate scale and ground-contact height.
-function prepareHouseTemplate(gltf) {
+function prepareTreeTemplate(gltf, targetHeight) {
   const inner = gltf.scene;
-  inner.traverse(obj => {
-    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
-  });
-  return inner;
+  inner.rotation.x = -Math.PI / 2;
+  inner.updateMatrixWorld(true);
+
+  const b  = new THREE.Box3().setFromObject(inner);
+  const sz = new THREE.Vector3();
+  b.getSize(sz);
+  const largest = Math.max(sz.x, sz.y, sz.z);
+  return _wrapTemplate(inner, largest > 0 ? targetHeight / largest : 1);
 }
 
-let _houseLogPrinted = false;
+// House: already Y-up, min.y≈0 (confirmed from raw bbox: x±3, y 0→4.7, z±2).
+// No rotation needed — scale so Y (height=4.7) reaches targetHeight.
+function prepareHouseTemplate(gltf, targetHeight) {
+  const inner = gltf.scene;
+  const b0    = new THREE.Box3().setFromObject(inner);
+  const sz0   = new THREE.Vector3();
+  b0.getSize(sz0);
+  return _wrapTemplate(inner, sz0.y > 0 ? targetHeight / sz0.y : 1);
+}
 
-// ── Block content ─────────────────────────────────
+// ── Block placement ───────────────────────────────
+const _TREE_OFFSETS = [
+  [ BLOCK * 0.3,  BLOCK * 0.3],
+  [-BLOCK * 0.3,  BLOCK * 0.3],
+  [ BLOCK * 0.3, -BLOCK * 0.3],
+  [-BLOCK * 0.3, -BLOCK * 0.3],
+];
+
 function fillBlock(scene, cx, cz, idx, treeT, houseT) {
-  if (!treeT && !houseT) return;
+  const g   = new THREE.Group();
+  const rng = seededRand(idx * 9973 + 1);
 
-  const g          = new THREE.Group();
-  const rng        = seededRand(idx * 9973 + 1);
-  const HALF_INNER = BLOCK / 2 - 6;
+  // One house per block — GLB if loaded, procedural fallback
+  if (houseT) {
+    const clone = houseT.clone(true);
+    clone.rotation.y = Math.floor(rng() * 4) * (Math.PI / 2);
+    clone.position.set(cx, 0, cz);
+    clone.updateMatrixWorld(true);
+    const hb = new THREE.Box3().setFromObject(clone);
+    houseColliders.push(hb);
+    g.add(clone);
+  } else {
+    makeHouse(g, cx, cz, rng);
+  }
 
-  for (let dx = -HALF_INNER; dx <= HALF_INNER; dx += 10) {
-    for (let dz = -HALF_INNER; dz <= HALF_INNER; dz += 12) {
-      const r   = rng();
-      const px  = cx + dx + (rng() - 0.5) * 3;
-      const pz  = cz + dz + (rng() - 0.5) * 3;
-      const rot = rng() * Math.PI * 2;
-
-      if (r < 0.45 && treeT) {
-        // Tree: rotation/scale/centering baked into wrapper — just place
+  // Trees near the four block corners
+  if (treeT) {
+    for (const [dx, dz] of _TREE_OFFSETS) {
+      if (rng() < 0.8) {
         const clone = treeT.clone(true);
-        clone.position.set(px, 0, pz);
-        clone.rotation.y = rot;
+        clone.position.set(cx + dx, 0, cz + dz);
+        clone.rotation.y = rng() * Math.PI * 2;
         g.add(clone);
-
-      } else if (r < 0.8 && houseT) {
-        const clone = houseT.clone(true);
-
-        // Stand the raw model upright (Z-up → Y-up)
-        clone.rotation.x = -Math.PI / 2;
-        clone.updateMatrixWorld(true);
-
-        // Measure bbox after rotation to get true dimensions
-        const b1 = new THREE.Box3().setFromObject(clone);
-        const s1 = new THREE.Vector3();
-        b1.getSize(s1);
-        const largest    = Math.max(s1.x, s1.y, s1.z);
-        const houseScale = largest > 0 ? 5 / largest : 1;
-        clone.scale.setScalar(houseScale);
-        clone.updateMatrixWorld(true);
-
-        // Remeasure after scaling to find the exact ground contact point
-        const b2 = new THREE.Box3().setFromObject(clone);
-
-        // Y rotation for variety — 90° snaps keep walls axis-aligned.
-        // Applied after computing b2 because Y rotation doesn't change Y extent.
-        clone.rotation.y = Math.round(rot / (Math.PI / 2)) * (Math.PI / 2);
-        clone.position.set(px, -b2.min.y, pz);
-        g.add(clone);
-
-        if (!_houseLogPrinted) {
-          console.log('[WorldMap] example house — rotation.x:', clone.rotation.x.toFixed(3),
-            'rotation.y:', clone.rotation.y.toFixed(3),
-            'scale:', houseScale.toFixed(4),
-            'position.y:', clone.position.y.toFixed(3),
-            '(lowest face at y=0)');
-          _houseLogPrinted = true;
-        }
+      } else {
+        rng();
       }
     }
   }
+
   scene.add(g);
 }
 
 // ── Public API ────────────────────────────────────
 export function makeCity(scene) {
-  // Ground planes (synchronous — visible immediately)
+  // Ground planes
   const groundBase = new THREE.Mesh(
     new THREE.PlaneGeometry(CITY_SPAN + 200, CITY_SPAN + 200),
     mGrass
@@ -163,7 +222,7 @@ export function makeCity(scene) {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // N-S roads (synchronous)
+  // N-S roads
   for (const rx of roadLinesX) {
     const road = box(ROAD, 0.08, CITY_SPAN, mAsphalt);
     road.position.set(rx, -0.04, OZ);
@@ -184,7 +243,7 @@ export function makeCity(scene) {
     }
   }
 
-  // E-W roads (synchronous)
+  // E-W roads
   for (const rz of roadLinesZ) {
     const road = box(CITY_SPAN, 0.08, ROAD, mAsphalt);
     road.position.set(OX, -0.04, rz);
@@ -205,11 +264,11 @@ export function makeCity(scene) {
     }
   }
 
-  // Block centers — used after models finish loading
+  // Block centers
   const bxs = roadLinesX.slice(0, -1).map((rx, i) => (rx + roadLinesX[i + 1]) / 2);
   const bzs = roadLinesZ.slice(0, -1).map((rz, i) => (rz + roadLinesZ[i + 1]) / 2);
 
-  // Load GLB models, then populate all blocks (async — roads visible meanwhile)
+  // Load tree.glb + house3.glb in parallel; populate blocks when both finish
   const loader  = new GLTFLoader();
   let treeT     = null;
   let houseT    = null;
@@ -220,28 +279,18 @@ export function makeCity(scene) {
       bzs.forEach((bz, bj) => fillBlock(scene, bx, bz, bi * N + bj, treeT, houseT))
     );
   }
-
   function tryDone() { if (--remaining === 0) onAllLoaded(); }
 
-  loader.load(
-    'assets/tree.glb',
-    gltf => {
-      treeT = prepareTreeTemplate(gltf, 4.5);
-      console.log('[WorldMap] tree.glb ready');
-      tryDone();
-    },
+  loader.load('assets/tree.glb',
+    gltf => { treeT  = prepareTreeTemplate(gltf, 4.5); console.log('[WorldMap] tree.glb ready');   tryDone(); },
     undefined,
-    err => { console.warn('[WorldMap] tree.glb failed:', err); tryDone(); }
+    err  => { console.warn('[WorldMap] tree.glb failed:', err);                                     tryDone(); }
   );
 
-  loader.load(
-    'assets/house3.glb',
-    gltf => {
-      houseT = prepareHouseTemplate(gltf);
-      console.log('[WorldMap] house3.glb ready');
-      tryDone();
-    },
+  // raw height=4.7 → scale=8/4.7 → final height=8 units
+  loader.load('assets/house3.glb',
+    gltf => { houseT = prepareHouseTemplate(gltf, 8);  console.log('[WorldMap] house3.glb ready'); tryDone(); },
     undefined,
-    err => { console.warn('[WorldMap] house3.glb failed:', err); tryDone(); }
+    err  => { console.warn('[WorldMap] house3.glb failed, using procedural:', err);                 tryDone(); }
   );
 }
